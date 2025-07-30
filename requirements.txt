@@ -6,9 +6,3 @@ scikit-learn
 akshare
 matplotlib
 plotly
-protobuf
-cudatoolkit
-cudnn
-threadpoolctl
-requests
-Pillow
