@@ -1,25 +1,14 @@
-# 核心框架
-streamlit            # 交互式Web应用框架 [2,5](@ref)
-tensorflow-gpu       # GPU加速的深度学习框架 (替代tensorflow-cpu) [7](@ref)
-
-# 数据处理
-pandas                # 数据分析和时间序列处理 [5,7](@ref)
-numpy                # 数值计算支持 [5](@ref)
-scikit-learn         # 数据标准化 (MinMaxScaler) [4](@ref)
-
-# 数据获取
-akshare             # 金融数据接口 (沪深300指数) [1](@ref)
-
-# 可视化
-matplotlib            # 图表绘制 [5,7](@ref)
-plotly               # 交互式图表 (替代静态图提升性能) [5](@ref)
-
-# 系统支持
-protobuf             # TensorFlow 依赖 [7](@ref)
-cudatoolkit          # NVIDIA CUDA 工具包 (需与本地CUDA版本匹配) [1](@ref)
-cudnn                 # GPU 加速库 [1](@ref)
-threadpoolctl         # 线程池优化 (并行预测) [4](@ref)
-
-# 工具库
-requests             # HTTP 请求 (备用API扩展) [3](@ref)
-Pillow               # 图像处理 (字体加载支持) [7](@ref)
+streamlit
+tensorflow
+pandas
+numpy
+scikit-learn
+akshare
+matplotlib
+plotly
+protobuf
+cudatoolkit
+cudnn
+threadpoolctl
+requests
+Pillow
