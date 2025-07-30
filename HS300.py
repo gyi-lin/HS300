@@ -1,32 +1,16 @@
 # -*- coding: utf-8 -*-
 import os
 
-# 启用GPU加速
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 使用GPU设备0
-
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import akshare as ak
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
 from sklearn.preprocessing import MinMaxScaler
-import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 import datetime
-from concurrent.futures import ThreadPoolExecutor
-import matplotlib.font_manager as fm
-import time
-
-# 配置GPU内存使用策略
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-    try:
-        # 设置GPU内存按需增长，避免一次性占用所有内存
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-    except RuntimeError as e:
-        print(e)
 
 # 1. 指定中文字体路径（相对路径）
 font_path = "./fonts/simhei.ttf"  # 替换为你的字体路径
@@ -38,6 +22,7 @@ fm.fontManager.addfont(font_path)
 # 3. 全局设置中文字体
 plt.rcParams["font.family"] = font_prop.get_name()  # 使用字体名称
 plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
+st.set_page_config(layout="wide")
 
 # 设置Streamlit页面
 st.set_page_config(page_title="沪深300预测系统", layout="wide")
@@ -53,16 +38,11 @@ with st.sidebar:
     st.divider()
     st.info(f"当前时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if st.button("重新训练模型"):
-        # 清除模型缓存以重新训练
-        if 'model' in st.session_state:
-            del st.session_state['model']
-        if 'predictions' in st.session_state:
-            del st.session_state['predictions']
         st.experimental_rerun()
 
 
-# 获取数据（缓存数据加载）
-@st.cache_data(ttl=3600, show_spinner="加载历史数据...")  # 缓存1小时
+# 获取数据
+@st.cache_data
 def load_data():
     hs300 = ak.stock_zh_index_daily(symbol="sh000300")
     hs300['date'] = pd.to_datetime(hs300['date'])
@@ -71,9 +51,8 @@ def load_data():
 
 
 try:
-    with st.spinner('正在加载沪深300历史数据...'):
-        hs300 = load_data()
-        last_date = hs300.index[-1].date()
+    hs300 = load_data()
+    last_date = hs300.index[-1].date()
 
     # 计算预测日期（下一个工作日）
     next_trading_day = last_date + pd.offsets.BDay(1)
@@ -87,136 +66,67 @@ st.subheader("历史数据概览")
 st.dataframe(hs300.tail().style.format({'close': '{:.2f}', 'volume': '{:,.0f}'}), height=150)
 st.line_chart(hs300[['close']], use_container_width=True)
 
-
-# 数据预处理（缓存预处理结果）
-@st.cache_data
-def preprocess_data(_hs300):
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(_hs300[['close']].values)
-    return scaler, scaled_data
-
-
-scaler, scaled_data = preprocess_data(hs300)
+# 数据预处理
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_data = scaler.fit_transform(hs300[['close']].values)
 
 
 # 创建时间序列数据集
-@st.cache_data
-def create_dataset(_data, _timesteps):
+def create_dataset(data, timesteps):
     X, y = [], []
-    for i in range(_timesteps, len(_data)):
-        X.append(_data[i - _timesteps:i, 0])
-        y.append(_data[i, 0])
+    for i in range(timesteps, len(data)):
+        X.append(data[i - timesteps:i, 0])
+        y.append(data[i, 0])
     return np.array(X), np.array(y)
 
 
-# 构建模型（缓存模型资源）
-@st.cache_resource(show_spinner=False)
-def build_model(_timesteps):
-    model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=(_timesteps, 1)),
-        LSTM(50),
-        Dense(1)
-    ])
-    model.compile(optimizer='adam', loss='mse')
-    return model
+X, y = create_dataset(scaled_data, timesteps)
+X = X.reshape(X.shape[0], X.shape[1], 1)
 
+# 训练模型
+st.subheader("模型训练过程")
+progress_bar = st.progress(0)
+status_text = st.empty()
 
-# 训练模型（使用GPU加速）
-def train_model(_model, _X, _y, _epochs, _batch_size):
-    history = _model.fit(_X, _y, epochs=_epochs, batch_size=_batch_size,
-                         validation_split=0.2, verbose=0)
-    return history
+model = Sequential([
+    LSTM(50, return_sequences=True, input_shape=(timesteps, 1)),
+    LSTM(50),
+    Dense(1)
+])
+model.compile(optimizer='adam', loss='mse')
 
+# 简化训练显示
+history = model.fit(X, y, epochs=epochs, batch_size=batch_size,
+                    validation_split=0.2, verbose=0)
 
-# 使用线程池执行预测任务
-def predict_in_thread(_model, _data):
-    return _model.predict(_data, verbose=0)
+# 显示训练过程
+progress_bar.progress(100)
+status_text.success("模型训练完成!")
 
-
-# 主训练流程
-def main_training():
-    # 创建数据集
-    X, y = create_dataset(scaled_data, timesteps)
-    X = X.reshape(X.shape[0], X.shape[1], 1)
-
-    # 构建模型
-    model = build_model(timesteps)
-
-    # 训练模型
-    st.subheader("模型训练过程")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    status_text.info("模型训练中，请稍候...")
-
-    start_time = time.time()
-    history = train_model(model, X, y, epochs, batch_size)
-    training_time = time.time() - start_time
-
-    # 更新进度和状态
-    progress_bar.progress(100)
-    status_text.success(f"模型训练完成! 耗时: {training_time:.2f}秒")
-
-    # 保存模型到session state
-    st.session_state['model'] = model
-
-    # 绘制损失曲线
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(history.history['loss'], label='训练损失')
-    ax.plot(history.history['val_loss'], label='验证损失')
-    ax.set_title('模型损失变化')
-    ax.set_ylabel('损失')
-    ax.set_xlabel('训练轮次')
-    ax.legend()
-    st.pyplot(fig)
-
-    return model
-
-
-# 检查是否已有训练好的模型
-if 'model' not in st.session_state:
-    model = main_training()
-else:
-    model = st.session_state['model']
-    st.success("使用缓存的训练模型")
-
+# 绘制损失曲线
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.plot(history.history['loss'], label='训练损失')
+ax.plot(history.history['val_loss'], label='验证损失')
+ax.set_title('模型损失变化')
+ax.set_ylabel('损失')
+ax.set_xlabel('训练轮次')
+ax.legend()
+st.pyplot(fig)
 
 # 预测下一个交易日
-def predict_tomorrow():
-    last_60_days = scaled_data[-timesteps:]
-    last_60_days = last_60_days.reshape(1, timesteps, 1)
+last_60_days = scaled_data[-timesteps:]
+last_60_days = last_60_days.reshape(1, timesteps, 1)
+pred_scaled = model.predict(last_60_days)
+tomorrow_pred = scaler.inverse_transform(pred_scaled)[0][0]
 
-    # 使用GPU加速预测
-    with tf.device('/GPU:0'):
-        pred_scaled = model.predict(last_60_days, verbose=0)
+# 计算历史准确性
+predictions = []
+for i in range(timesteps, len(scaled_data)):
+    input_data = scaled_data[i - timesteps:i].reshape(1, timesteps, 1)
+    pred = model.predict(input_data, verbose=0)
+    predictions.append(scaler.inverse_transform(pred)[0][0])
 
-    tomorrow_pred = scaler.inverse_transform(pred_scaled)[0][0]
-    return tomorrow_pred
-
-
-tomorrow_pred = predict_tomorrow()
-
-# 计算历史准确性（缓存计算结果）
-if 'predictions' not in st.session_state:
-    predictions = []
-    actuals = hs300.iloc[timesteps:]['close'].values
-
-    # 使用线程池并行预测
-    with ThreadPoolExecutor() as executor:
-        futures = []
-        for i in range(timesteps, len(scaled_data)):
-            input_data = scaled_data[i - timesteps:i].reshape(1, timesteps, 1)
-            futures.append(executor.submit(predict_in_thread, model, input_data))
-
-        for i, future in enumerate(futures):
-            pred = future.result()
-            predictions.append(scaler.inverse_transform(pred)[0][0])
-
-    st.session_state['predictions'] = predictions
-    st.session_state['actuals'] = actuals
-else:
-    predictions = st.session_state['predictions']
-    actuals = st.session_state['actuals']
-
+actuals = hs300.iloc[timesteps:]['close'].values
 errors = np.abs(predictions - actuals)
 accuracy = 100 * (1 - errors / actuals)
 
