@@ -6,3 +6,4 @@ scikit-learn
 akshare
 matplotlib
 plotly
+psutil
